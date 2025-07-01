@@ -58,18 +58,41 @@ func (i GoogleInstanceService) Create(vmProps *Properties, networks Networks, re
 
 		// Parse MachineType to figure out how many CPUs the instance has.
 		// Format: zones/zone/machineTypes/machine-type with machine-type being in the format
-		// of either n1-standard-1 or custom-4-5120
+		// of either n1-standard-1, custom-4-5120, or a2-highgpu-1g
 		machineTypeName := vmProps.MachineType[strings.LastIndex(vmProps.MachineType, "/")+1:]
 		machineTypeComponents := strings.Split(machineTypeName, "-")
-		machineTypeSeries := machineTypeComponents[0]
-		machineTypeCpuComponent := machineTypeComponents[2]
-		if machineTypeSeries == "custom" {
-			machineTypeCpuComponent = machineTypeComponents[1]
+		machineTypeSeries := machineTypeComponents[0] // e.g. n1, custom, a2
+
+		numberOfCPUs := 0
+
+		if strings.HasPrefix(machineTypeSeries, "a2") {
+			// a2 machine types (e.g. a2-highgpu-1g)
+			gpuCount := machineTypeComponents[2]         // e.g. 1g
+			gpuCount = strings.TrimSuffix(gpuCount, "g") // e.g. 1
+			numberOfGPUs, err := strconv.Atoi(gpuCount)
+			if err != nil {
+				return "", err
+			}
+			// calculate number of CPUs based on number of GPUs per official documentation
+			// https://cloud.google.com/compute/docs/accelerator-optimized-machines#a2-standard-vms
+			numberOfCPUs = numberOfGPUs * 12
+			if numberOfCPUs > 96 {
+				numberOfCPUs = 96
+			}
+		} else if strings.HasPrefix(machineTypeSeries, "n") {
+			// n* machine types (e.g. n1-standard-1)
+			numberOfCPUs, err = strconv.Atoi(machineTypeComponents[2])
+			if err != nil {
+				return "", err
+			}
+		} else {
+			// custom machine types (e.g. custom-4-5120)
+			numberOfCPUs, err = strconv.Atoi(machineTypeComponents[1])
+			if err != nil {
+				return "", err
+			}
 		}
-		numberOfCPUs, err := strconv.Atoi(machineTypeCpuComponent)
-		if err != nil {
-			return "", err
-		}
+
 		// n2 and n2d series require a minimum number of SSDs depending on vCPUs
 		// https://cloud.google.com/compute/docs/disks/local-ssd#lssd_disk_options
 		if machineTypeSeries == "n2" { //nolint:staticcheck
